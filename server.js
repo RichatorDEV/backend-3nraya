@@ -17,7 +17,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 // Initialize database tables
 async function initializeDatabase() {
     try {
-        // Create tables
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -325,6 +324,11 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
             console.log('Unauthorized move attempt:', player, gameId);
             return res.status(403).json({ message: 'No autorizado' });
         }
+        const playerSymbol = game.player1 === player ? 'X' : 'O';
+        if (playerSymbol !== game.current_player) {
+            console.log('Out-of-turn move attempt:', { player, currentPlayer: game.current_player, gameId });
+            return res.status(400).json({ message: 'No es tu turno' });
+        }
         let status = 'active';
         let winner = null;
         if (checkWin(board, currentPlayer)) {
@@ -359,11 +363,14 @@ app.get('/api/games/:id', authenticateToken, async (req, res) => {
             console.log('Unauthorized game access:', req.user.username, gameId);
             return res.status(403).json({ message: 'No autorizado' });
         }
+        console.log('Game state fetched:', { gameId, user: req.user.username, board: game.board });
         res.json({
             board: JSON.parse(game.board),
             currentPlayer: game.current_player,
             status: game.status,
-            winner: game.winner
+            winner: game.winner,
+            player1: game.player1,
+            player2: game.player2
         });
     } catch (error) {
         console.error('Get game state error:', error);
