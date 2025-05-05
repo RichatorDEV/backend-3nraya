@@ -5,7 +5,7 @@ const { Pool } = require('pg');
 const cors = require('cors');
 
 const app = express();
-app.use(cors({ origin: '*' })); // Allow all origins for debugging
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const pool = new Pool({
@@ -46,7 +46,6 @@ async function initializeDatabase() {
             )
         `);
 
-        // Check and add game_id column if missing
         const columnCheck = await pool.query(`
             SELECT column_name 
             FROM information_schema.columns 
@@ -63,21 +62,17 @@ async function initializeDatabase() {
     }
 }
 
-// Run database initialization
 initializeDatabase();
 
-// Error logging middleware
 app.use((err, req, res, next) => {
     console.error('Server error:', err.stack);
     res.status(500).json({ message: 'Error interno del servidor', details: err.message });
 });
 
-// Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
-// Middleware to verify JWT
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -96,7 +91,6 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// Validate board format
 function validateBoard(board) {
     if (!Array.isArray(board) || board.length !== 9) {
         return false;
@@ -104,7 +98,6 @@ function validateBoard(board) {
     return board.every(cell => cell === '' || cell === 'X' || cell === 'O');
 }
 
-// User Registration
 app.post('/api/users/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -129,7 +122,6 @@ app.post('/api/users/register', async (req, res) => {
     }
 });
 
-// User Login
 app.post('/api/users/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -148,7 +140,6 @@ app.post('/api/users/login', async (req, res) => {
     }
 });
 
-// Send Invitation
 app.post('/api/invitations', authenticateToken, async (req, res) => {
     const { from, to } = req.body;
     console.log('Invitation request:', { from, to, authenticatedUser: req.user.username });
@@ -174,7 +165,6 @@ app.post('/api/invitations', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Pending Invitations
 app.get('/api/invitations', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -189,7 +179,6 @@ app.get('/api/invitations', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Sent Invitations
 app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -208,7 +197,6 @@ app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
     }
 });
 
-// Accept Invitation
 app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
     const { player } = req.body;
     const invitationId = req.params.id;
@@ -247,7 +235,6 @@ app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
     }
 });
 
-// Reject Invitation
 app.post('/api/invitations/:id/reject', authenticateToken, async (req, res) => {
     const invitationId = req.params.id;
     console.log('Reject invitation attempt:', { invitationId, user: req.user.username });
@@ -269,7 +256,6 @@ app.post('/api/invitations/:id/reject', authenticateToken, async (req, res) => {
     }
 });
 
-// Create Game
 app.post('/api/games', authenticateToken, async (req, res) => {
     const { player1 } = req.body;
     if (req.user.username !== player1) {
@@ -289,7 +275,6 @@ app.post('/api/games', authenticateToken, async (req, res) => {
     }
 });
 
-// Join Game
 app.post('/api/games/:id/join', authenticateToken, async (req, res) => {
     const { player2 } = req.body;
     const gameId = req.params.id;
@@ -317,7 +302,6 @@ app.post('/api/games/:id/join', authenticateToken, async (req, res) => {
     }
 });
 
-// Make Move
 app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
     const { player, board, currentPlayer } = req.body;
     const gameId = req.params.id;
@@ -334,7 +318,7 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
         }
         const playerSymbol = game.player1 === player ? 'X' : 'O';
         if (playerSymbol !== game.current_player) {
-            console.log('Out-of-turn move attempt:', { player, currentPlayer: game.current_player, gameId });
+            console.log('Out-of-turn move attempt:', { player, playerSymbol, currentPlayer: game.current_player, gameId });
             return res.status(400).json({ message: 'No es tu turno' });
         }
         if (!validateBoard(board)) {
@@ -353,7 +337,7 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
             'UPDATE games SET board = $1, current_player = $2, status = $3, winner = $4 WHERE id = $5',
             [JSON.stringify(board), currentPlayer === 'X' ? 'O' : 'X', status, winner, gameId]
         );
-        console.log('Move processed:', { gameId, player, currentPlayer, board });
+        console.log('Move processed:', { gameId, player, playerSymbol, currentPlayer, board });
         res.json({ message: 'Movimiento registrado' });
     } catch (error) {
         console.error('Move error:', error);
@@ -361,7 +345,6 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Game State
 app.get('/api/games/:id', authenticateToken, async (req, res) => {
     const gameId = req.params.id;
     try {
@@ -402,7 +385,6 @@ app.get('/api/games/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// Helper function to check win
 function checkWin(board, player) {
     const winConditions = [
         [0, 1, 2], [3, 4, 5], [6, 7, 8],
