@@ -17,6 +17,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 // Initialize database tables
 async function initializeDatabase() {
     try {
+        // Create tables
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -45,6 +46,18 @@ async function initializeDatabase() {
                 game_id INTEGER
             )
         `);
+
+        // Check and add game_id column if missing
+        const columnCheck = await pool.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'invitations' AND column_name = 'game_id'
+        `);
+        if (columnCheck.rows.length === 0) {
+            console.log('Adding game_id column to invitations table');
+            await pool.query('ALTER TABLE invitations ADD COLUMN game_id INTEGER');
+        }
+
         console.log('Database tables initialized successfully');
     } catch (error) {
         console.error('Error initializing database:', error);
@@ -57,7 +70,7 @@ initializeDatabase();
 // Error logging middleware
 app.use((err, req, res, next) => {
     console.error('Server error:', err.stack);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    res.status(500).json({ message: 'Error interno del servidor', details: err.message });
 });
 
 // Health check endpoint
@@ -104,7 +117,7 @@ app.post('/api/users/register', async (req, res) => {
         if (error.code === '23505') {
             res.status(400).json({ message: 'El usuario ya existe' });
         } else {
-            res.status(500).json({ message: 'Error al registrar usuario' });
+            res.status(500).json({ message: 'Error al registrar usuario', details: error.message });
         }
     }
 });
@@ -124,7 +137,7 @@ app.post('/api/users/login', async (req, res) => {
         res.json({ token });
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ message: 'Error al iniciar sesión' });
+        res.status(500).json({ message: 'Error al iniciar sesión', details: error.message });
     }
 });
 
@@ -150,7 +163,7 @@ app.post('/api/invitations', authenticateToken, async (req, res) => {
         res.json({ invitationId: result.rows[0].id });
     } catch (error) {
         console.error('Send invitation error:', error);
-        res.status(500).json({ message: 'Error al enviar la invitación' });
+        res.status(500).json({ message: 'Error al enviar la invitación', details: error.message });
     }
 });
 
@@ -173,13 +186,17 @@ app.get('/api/invitations', authenticateToken, async (req, res) => {
 app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT i.id, i.from_username, i.to_username, i.status, i.created_at, i.game_id, g.id as game_id FROM invitations i LEFT JOIN games g ON i.game_id = g.id WHERE i.from_username = $1',
+            'SELECT i.id, i.from_username, i.to_username, i.status, i.created_at, i.game_id FROM invitations i WHERE i.from_username = $1',
             [req.user.username]
         );
         console.log('Fetched sent invitations for:', req.user.username, 'Rows:', result.rows);
         res.json({ invitations: result.rows || [] });
     } catch (error) {
         console.error('Get sent invitations error:', error);
+        if (error.code === '42703') {
+            console.warn('Column missing error detected, returning empty invitations');
+            return res.json({ invitations: [] });
+        }
         res.status(500).json({ message: 'Error al obtener invitaciones enviadas', details: error.message });
     }
 });
@@ -261,7 +278,7 @@ app.post('/api/games', authenticateToken, async (req, res) => {
         res.json({ gameId: result.rows[0].id });
     } catch (error) {
         console.error('Create game error:', error);
-        res.status(500).json({ message: 'Error al crear el juego' });
+        res.status(500).json({ message: 'Error al crear el juego', details: error.message });
     }
 });
 
@@ -289,7 +306,7 @@ app.post('/api/games/:id/join', authenticateToken, async (req, res) => {
         res.json({ message: 'Unido al juego' });
     } catch (error) {
         console.error('Join game error:', error);
-        res.status(500).json({ message: 'Error al unirse al juego' });
+        res.status(500).json({ message: 'Error al unirse al juego', details: error.message });
     }
 });
 
@@ -324,7 +341,7 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
         res.json({ message: 'Movimiento registrado' });
     } catch (error) {
         console.error('Move error:', error);
-        res.status(500).json({ message: 'Error al procesar el movimiento' });
+        res.status(500).json({ message: 'Error al procesar el movimiento', details: error.message });
     }
 });
 
@@ -350,7 +367,7 @@ app.get('/api/games/:id', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Get game state error:', error);
-        res.status(500).json({ message: 'Error al obtener el estado del juego' });
+        res.status(500).json({ message: 'Error al obtener el estado del juego', details: error.message });
     }
 });
 
