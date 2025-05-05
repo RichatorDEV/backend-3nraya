@@ -188,8 +188,9 @@ app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
 app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
     const { player } = req.body;
     const invitationId = req.params.id;
+    console.log('Accept invitation attempt:', { invitationId, player, authenticatedUser: req.user.username });
     if (req.user.username !== player) {
-        console.log('Unauthorized accept attempt:', req.user.username, player);
+        console.log('Unauthorized accept attempt:', { authenticated: req.user.username, player });
         return res.status(403).json({ message: 'No autorizado' });
     }
     try {
@@ -199,18 +200,25 @@ app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
         );
         const invitation = result.rows[0];
         if (!invitation) {
-            console.log('Invitation not found:', invitationId);
-            return res.status(404).json({ message: 'Invitación no encontrada' });
+            console.log('Invitation not found or not pending:', { invitationId, to_username: player });
+            return res.status(404).json({ message: 'Invitación no encontrada o ya procesada' });
         }
         const gameResult = await pool.query(
             'INSERT INTO games (player1, player2, board, current_player, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             [invitation.from_username, player, JSON.stringify(['', '', '', '', '', '', '', '', '']), 'X', 'active']
         );
-        await pool.query('UPDATE invitations SET status = $1, game_id = $2 WHERE id = $3', ['accepted', gameResult.rows[0].id, invitationId]);
-        console.log('Invitation accepted, game created:', { invitationId, gameId: gameResult.rows[0].id });
-        res.json({ gameId: gameResult.rows[0].id });
+        const gameId = gameResult.rows[0].id;
+        await pool.query(
+            'UPDATE invitations SET status = $1, game_id = $2 WHERE id = $3',
+            ['accepted', gameId, invitationId]
+        );
+        console.log('Invitation accepted, game created:', { invitationId, gameId });
+        res.json({ gameId });
     } catch (error) {
         console.error('Accept invitation error:', error);
+        if (error.code === '23505') {
+            return res.status(400).json({ message: 'Error: Invitación ya procesada' });
+        }
         res.status(500).json({ message: 'Error al aceptar la invitación' });
     }
 });
@@ -218,14 +226,15 @@ app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
 // Reject Invitation
 app.post('/api/invitations/:id/reject', authenticateToken, async (req, res) => {
     const invitationId = req.params.id;
+    console.log('Reject invitation attempt:', { invitationId, user: req.user.username });
     try {
         const result = await pool.query(
             'SELECT * FROM invitations WHERE id = $1 AND to_username = $2 AND status = $3',
             [invitationId, req.user.username, 'pending']
         );
         if (!result.rows[0]) {
-            console.log('Invitation not found:', invitationId);
-            return res.status(404).json({ message: 'Invitación no encontrada' });
+            console.log('Invitation not found or not pending:', { invitationId, to_username: req.user.username });
+            return res.status(404).json({ message: 'Invitación no encontrada o ya procesada' });
         }
         await pool.query('UPDATE invitations SET status = $1 WHERE id = $2', ['rejected', invitationId]);
         console.log('Invitation rejected:', invitationId);
