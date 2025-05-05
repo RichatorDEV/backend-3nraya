@@ -96,6 +96,14 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+// Validate board format
+function validateBoard(board) {
+    if (!Array.isArray(board) || board.length !== 9) {
+        return false;
+    }
+    return board.every(cell => cell === '' || cell === 'X' || cell === 'O');
+}
+
 // User Registration
 app.post('/api/users/register', async (req, res) => {
     const { username, password } = req.body;
@@ -329,6 +337,10 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
             console.log('Out-of-turn move attempt:', { player, currentPlayer: game.current_player, gameId });
             return res.status(400).json({ message: 'No es tu turno' });
         }
+        if (!validateBoard(board)) {
+            console.log('Invalid board format:', { board, gameId });
+            return res.status(400).json({ message: 'Tablero inválido' });
+        }
         let status = 'active';
         let winner = null;
         if (checkWin(board, currentPlayer)) {
@@ -341,7 +353,7 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
             'UPDATE games SET board = $1, current_player = $2, status = $3, winner = $4 WHERE id = $5',
             [JSON.stringify(board), currentPlayer === 'X' ? 'O' : 'X', status, winner, gameId]
         );
-        console.log('Move processed:', { gameId, player, currentPlayer });
+        console.log('Move processed:', { gameId, player, currentPlayer, board });
         res.json({ message: 'Movimiento registrado' });
     } catch (error) {
         console.error('Move error:', error);
@@ -363,9 +375,21 @@ app.get('/api/games/:id', authenticateToken, async (req, res) => {
             console.log('Unauthorized game access:', req.user.username, gameId);
             return res.status(403).json({ message: 'No autorizado' });
         }
-        console.log('Game state fetched:', { gameId, user: req.user.username, board: game.board });
+        let parsedBoard;
+        try {
+            console.log('Raw board:', game.board);
+            parsedBoard = JSON.parse(game.board);
+            if (!validateBoard(parsedBoard)) {
+                console.warn('Invalid board format in database:', { gameId, board: game.board });
+                parsedBoard = ['', '', '', '', '', '', '', '', ''];
+            }
+        } catch (error) {
+            console.error('Board parse error:', { gameId, board: game.board, error: error.message });
+            parsedBoard = ['', '', '', '', '', '', '', '', ''];
+        }
+        console.log('Game state fetched:', { gameId, user: req.user.username, board: parsedBoard });
         res.json({
-            board: JSON.parse(game.board),
+            board: parsedBoard,
             currentPlayer: game.current_player,
             status: game.status,
             winner: game.winner,
