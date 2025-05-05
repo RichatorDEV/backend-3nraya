@@ -165,7 +165,7 @@ app.get('/api/invitations', authenticateToken, async (req, res) => {
         res.json({ invitations: result.rows });
     } catch (error) {
         console.error('Get invitations error:', error);
-        res.status(500).json({ message: 'Error al obtener invitaciones' });
+        res.status(500).json({ message: 'Error al obtener invitaciones', details: error.message });
     }
 });
 
@@ -173,14 +173,14 @@ app.get('/api/invitations', authenticateToken, async (req, res) => {
 app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT i.*, g.id as game_id FROM invitations i LEFT JOIN games g ON i.game_id = g.id WHERE i.from_username = $1',
+            'SELECT i.id, i.from_username, i.to_username, i.status, i.created_at, i.game_id, g.id as game_id FROM invitations i LEFT JOIN games g ON i.game_id = g.id WHERE i.from_username = $1',
             [req.user.username]
         );
-        console.log('Fetched sent invitations for:', req.user.username, result.rows);
-        res.json({ invitations: result.rows });
+        console.log('Fetched sent invitations for:', req.user.username, 'Rows:', result.rows);
+        res.json({ invitations: result.rows || [] });
     } catch (error) {
         console.error('Get sent invitations error:', error);
-        res.status(500).json({ message: 'Error al obtener invitaciones enviadas' });
+        res.status(500).json({ message: 'Error al obtener invitaciones enviadas', details: error.message });
     }
 });
 
@@ -219,7 +219,7 @@ app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
         if (error.code === '23505') {
             return res.status(400).json({ message: 'Error: Invitación ya procesada' });
         }
-        res.status(500).json({ message: 'Error al aceptar la invitación' });
+        res.status(500).json({ message: 'Error al aceptar la invitación', details: error.message });
     }
 });
 
@@ -241,7 +241,7 @@ app.post('/api/invitations/:id/reject', authenticateToken, async (req, res) => {
         res.json({ message: 'Invitación rechazada' });
     } catch (error) {
         console.error('Reject invitation error:', error);
-        res.status(500).json({ message: 'Error al rechazar la invitación' });
+        res.status(500).json({ message: 'Error al rechazar la invitación', details: error.message });
     }
 });
 
