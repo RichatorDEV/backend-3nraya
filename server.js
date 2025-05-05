@@ -38,7 +38,7 @@ async function initializeDatabase() {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS invitations (
                 id SERIAL PRIMARY KEY,
-                from_username VARCHAR(50) NOT NULL,
+                from_username VARCHAR(50) NOT NOT NULL,
                 to_username VARCHAR(50) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -93,9 +93,14 @@ const authenticateToken = (req, res, next) => {
 
 function validateBoard(board) {
     if (!Array.isArray(board) || board.length !== 9) {
+        console.log('Board validation failed: incorrect length or not an array', board);
         return false;
     }
-    return board.every(cell => cell === '' || cell === 'X' || cell === 'O');
+    const valid = board.every(cell => cell === '' || cell === 'X' || cell === 'O');
+    if (!valid) {
+        console.log('Board validation failed: invalid cell values', board);
+    }
+    return valid;
 }
 
 app.post('/api/users/register', async (req, res) => {
@@ -318,26 +323,52 @@ app.post('/api/games/:id/move', authenticateToken, async (req, res) => {
         }
         const playerSymbol = game.player1 === player ? 'X' : 'O';
         if (playerSymbol !== game.current_player) {
-            console.log('Out-of-turn move attempt:', { player, playerSymbol, currentPlayer: game.current_player, gameId });
+            console.log('Out-of-turn move attempt:', { 
+                player, 
+                playerSymbol, 
+                currentPlayer: game.current_player, 
+                gameId, 
+                submittedCurrentPlayer: currentPlayer 
+            });
             return res.status(400).json({ message: 'No es tu turno' });
         }
         if (!validateBoard(board)) {
-            console.log('Invalid board format:', { board, gameId });
+            console.log('Invalid board submitted:', { board, gameId, existingBoard: game.board });
             return res.status(400).json({ message: 'Tablero inválido' });
+        }
+        // Validate board changes
+        let existingBoard;
+        try {
+            existingBoard = JSON.parse(game.board);
+        } catch (error) {
+            console.error('Error parsing existing board:', { gameId, board: game.board });
+            existingBoard = ['', '', '', '', '', '', '', '', ''];
+        }
+        const changes = board.reduce((count, cell, i) => cell !== existingBoard[i] ? count + 1 : count, 0);
+        if (changes > 1) {
+            console.log('Invalid move: too many board changes', { gameId, existingBoard, submittedBoard: board });
+            return res.status(400).json({ message: 'Movimiento inválido: solo se permite un cambio' });
         }
         let status = 'active';
         let winner = null;
-        if (checkWin(board, currentPlayer)) {
+        if (checkWin(board, playerSymbol)) {
             status = 'won';
-            winner = currentPlayer;
+            winner = playerSymbol;
         } else if (board.every(cell => cell !== '')) {
             status = 'draw';
         }
         await pool.query(
             'UPDATE games SET board = $1, current_player = $2, status = $3, winner = $4 WHERE id = $5',
-            [JSON.stringify(board), currentPlayer === 'X' ? 'O' : 'X', status, winner, gameId]
+            [JSON.stringify(board), playerSymbol === 'X' ? 'O' : 'X', status, winner, gameId]
         );
-        console.log('Move processed:', { gameId, player, playerSymbol, currentPlayer, board });
+        console.log('Move processed:', { 
+            gameId, 
+            player, 
+            playerSymbol, 
+            currentPlayer: game.current_player, 
+            newCurrentPlayer: playerSymbol === 'X' ? 'O' : 'X', 
+            board 
+        });
         res.json({ message: 'Movimiento registrado' });
     } catch (error) {
         console.error('Move error:', error);
@@ -370,7 +401,12 @@ app.get('/api/games/:id', authenticateToken, async (req, res) => {
             console.error('Board parse error:', { gameId, board: game.board, error: error.message });
             parsedBoard = ['', '', '', '', '', '', '', '', ''];
         }
-        console.log('Game state fetched:', { gameId, user: req.user.username, board: parsedBoard });
+        console.log('Game state fetched:', { 
+            gameId, 
+            user: req.user.username, 
+            board: parsedBoard, 
+            currentPlayer: game.current_player 
+        });
         res.json({
             board: parsedBoard,
             currentPlayer: game.current_player,
