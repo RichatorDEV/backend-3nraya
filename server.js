@@ -5,7 +5,11 @@ const { Pool } = require('pg');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:8080', 'https://your-frontend-domain.com'], // Update with your frontend URL
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
 const pool = new Pool({
@@ -33,6 +37,15 @@ async function initializeDatabase() {
                 current_player CHAR(1) NOT NULL,
                 status VARCHAR(20) NOT NULL,
                 winner CHAR(1)
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS invitations (
+                id SERIAL PRIMARY KEY,
+                from_username VARCHAR(50) NOT NULL,
+                to_username VARCHAR(50) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
         console.log('Database tables initialized successfully');
@@ -93,6 +106,79 @@ app.post('/api/users/login', async (req, res) => {
         res.json({ token });
     } catch (error) {
         res.status(500).json({ message: 'Error al iniciar sesión' });
+    }
+});
+
+// Send Invitation
+app.post('/api/invitations', authenticateToken, async (req, res) => {
+    const { from, to } = req.body;
+    if (req.user.username !== from) {
+        return res.status(403).json({ message: 'No autorizado' });
+    }
+    try {
+        const userCheck = await pool.query('SELECT * FROM users WHERE username = $1', [to]);
+        if (!userCheck.rows[0]) return res.status(404).json({ message: 'Usuario no encontrado' });
+        const result = await pool.query(
+            'INSERT INTO invitations (from_username, to_username) VALUES ($1, $2) RETURNING id',
+            [from, to]
+        );
+        res.json({ invitationId: result.rows[0].id });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al enviar la invitación' });
+    }
+});
+
+// Get Pending Invitations
+app.get('/api/invitations', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM invitations WHERE to_username = $1 AND status = $2',
+            [req.user.username, 'pending']
+        );
+        res.json({ invitations: result.rows });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al obtener invitaciones' });
+    }
+});
+
+// Accept Invitation
+app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
+    const { player } = req.body;
+    const invitationId = req.params.id;
+    if (req.user.username !== player) {
+        return res.status(403).json({ message: 'No autorizado' });
+    }
+    try {
+        const result = await pool.query(
+            'SELECT * FROM invitations WHERE id = $1 AND to_username = $2 AND status = $3',
+            [invitationId, player, 'pending']
+        );
+        const invitation = result.rows[0];
+        if (!invitation) return res.status(404).json({ message: 'Invitación no encontrada' });
+        const gameResult = await pool.query(
+            'INSERT INTO games (player1, player2, board, current_player, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            [invitation.from_username, player, JSON.stringify(['', '', '', '', '', '', '', '', '']), 'X', 'active']
+        );
+        await pool.query('UPDATE invitations SET status = $1 WHERE id = $2', ['accepted', invitationId]);
+        res.json({ gameId: gameResult.rows[0].id });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al aceptar la invitación' });
+    }
+});
+
+// Reject Invitation
+app.post('/api/invitations/:id/reject', authenticateToken, async (req, res) => {
+    const invitationId = req.params.id;
+    try {
+        const result = await pool.query(
+            'SELECT * FROM invitations WHERE id = $1 AND to_username = $2 AND status = $3',
+            [invitationId, req.user.username, 'pending']
+        );
+        if (!result.rows[0]) return res.status(404).json({ message: 'Invitación no encontrada' });
+        await pool.query('UPDATE invitations SET status = $1 WHERE id = $2', ['rejected', invitationId]);
+        res.json({ message: 'Invitación rechazada' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al rechazar la invitación' });
     }
 });
 
