@@ -41,7 +41,8 @@ async function initializeDatabase() {
                 from_username VARCHAR(50) NOT NULL,
                 to_username VARCHAR(50) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                game_id INTEGER
             )
         `);
         console.log('Database tables initialized successfully');
@@ -69,14 +70,15 @@ const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) {
-        console.log('No token provided');
+        console.log('No token provided for:', req.path);
         return res.status(401).json({ message: 'Token requerido' });
     }
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
-            console.log('Invalid token:', err.message);
+            console.log('Token verification failed:', err.message, 'Token:', token);
             return res.status(403).json({ message: 'Token inválido' });
         }
+        console.log('Token verified, user:', user);
         req.user = user;
         next();
     });
@@ -86,7 +88,7 @@ const authenticateToken = (req, res, next) => {
 app.post('/api/users/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
-        console.log('Missing username or password');
+        console.log('Missing username or password:', req.body);
         return res.status(400).json({ message: 'Usuario y contraseña requeridos' });
     }
     try {
@@ -95,6 +97,7 @@ app.post('/api/users/register', async (req, res) => {
             'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
             [username, hashedPassword]
         );
+        console.log('User registered:', username);
         res.status(201).json({ message: 'Usuario registrado' });
     } catch (error) {
         console.error('Registration error:', error);
@@ -116,7 +119,8 @@ app.post('/api/users/login', async (req, res) => {
             console.log('Invalid credentials for:', username);
             return res.status(401).json({ message: 'Credenciales inválidas' });
         }
-        const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
+        console.log('Login successful, token issued for:', username);
         res.json({ token });
     } catch (error) {
         console.error('Login error:', error);
@@ -127,8 +131,9 @@ app.post('/api/users/login', async (req, res) => {
 // Send Invitation
 app.post('/api/invitations', authenticateToken, async (req, res) => {
     const { from, to } = req.body;
+    console.log('Invitation request:', { from, to, authenticatedUser: req.user.username });
     if (req.user.username !== from) {
-        console.log('Unauthorized invitation attempt:', req.user.username, from);
+        console.warn('Username mismatch in invitation:', { from, authenticated: req.user.username });
         return res.status(403).json({ message: 'No autorizado' });
     }
     try {
@@ -164,6 +169,21 @@ app.get('/api/invitations', authenticateToken, async (req, res) => {
     }
 });
 
+// Get Sent Invitations
+app.get('/api/sent-invitations', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT i.*, g.id as game_id FROM invitations i LEFT JOIN games g ON i.game_id = g.id WHERE i.from_username = $1',
+            [req.user.username]
+        );
+        console.log('Fetched sent invitations for:', req.user.username, result.rows);
+        res.json({ invitations: result.rows });
+    } catch (error) {
+        console.error('Get sent invitations error:', error);
+        res.status(500).json({ message: 'Error al obtener invitaciones enviadas' });
+    }
+});
+
 // Accept Invitation
 app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
     const { player } = req.body;
@@ -186,8 +206,8 @@ app.post('/api/invitations/:id/accept', authenticateToken, async (req, res) => {
             'INSERT INTO games (player1, player2, board, current_player, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             [invitation.from_username, player, JSON.stringify(['', '', '', '', '', '', '', '', '']), 'X', 'active']
         );
-        await pool.query('UPDATE invitations SET status = $1 WHERE id = $2', ['accepted', invitationId]);
-        console.log('Invitation accepted, game created:', gameResult.rows[0].id);
+        await pool.query('UPDATE invitations SET status = $1, game_id = $2 WHERE id = $3', ['accepted', gameResult.rows[0].id, invitationId]);
+        console.log('Invitation accepted, game created:', { invitationId, gameId: gameResult.rows[0].id });
         res.json({ gameId: gameResult.rows[0].id });
     } catch (error) {
         console.error('Accept invitation error:', error);
